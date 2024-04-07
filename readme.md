@@ -1,65 +1,64 @@
-## 介绍
+## Introduction
 
-PGO（Profile Guided Optimization），是一种根据运行时 Profiling Data 来进行优化的技术，通过下面两个方面，使 Node.js 应用启动时间提升数倍：
-### 1. require 关系加速
+PGO (Profile Guided Optimization) is a technique that optimizes based on runtime profiling data. It enhances the startup time of Node.js applications by several factors through the following two aspects:
 
-在一个文件中进行 `require` 一个 `a`，它会通过一系列寻径，最终得到对应的 `a` 对应文件的绝对路径；而同样在另一个文件中也进行 `require` 一个 `a`，其得到的绝对路径可能就不相同了。PGO 将不同文件里面 `require` 各种字符串得到的结果关系一一对应起来，得到一份二维 map。有了这一份关系数据，对 `require` 函数进行改造，在寻径逻辑前加一段逻辑，即从 Map 中查找对应关系，若找到了对应关系，则直接返回对应内容；若找不到，则使用原始的寻径逻辑进行兜底，从而实现加速。
+### 1. Acceleration of require Relationships
 
-### 2. require 文件缓存
+When using `require` to import a module `a` in one file, it goes through a series of path resolutions to obtain the absolute path of the `a` module file. Similarly, when `require`-ing the same module `a` in another file, the resolved absolute path may differ. PGO maps the results of various `require` calls across different files to establish a two-dimensional map of relationships. With this relationship data, the `require` function is modified to include a logic that checks the mapping before the path resolution. If a corresponding relationship is found in the map, it directly returns the associated content; otherwise, it falls back to the original path resolution logic, thereby achieving acceleration.
 
-在反复 `require` 的逻辑中，反复判断文件是否存在是一个扎堆的逻辑，而另一个扎堆的问题就是反复读取碎片文件。
+### 2. File Caching for require
 
-PGO 的 `Require Cache` 中除了之前提到的关系之外，还会存储：
+Repeatedly checking for file existence and repeatedly reading fragmented files are common operations in the `require` logic. PGO's `Require Cache` not only stores the aforementioned relationships but also:
 
-1. 源文件的文本信息；
-2. 源文件编译出来的 V8 byte code。
+1. Textual information of the source files.
+2. V8 byte code compiled from the source files.
 
-这些信息与关系信息一并结构化存储于一个缓存文件中，使得我们一加载这个缓存文件，无须经过任何反序列化的步骤，就可以直接使用该 Map。
+All this information is structured and stored in a cache file. By loading this cache file at process startup, there is no need for any deserialization step, enabling direct use of the map.
 
-有了这么一个文件，我们只需要在进程刚启动的时候加载一遍缓存文件。然后每次 require 的时候，都直接从缓存关系中查找出来对应的文件，再从缓存中获取该文件的源代码文本及其 byte code，直接加载。
+With this file, we only need to load the cache file once at the beginning of the process. Then, each time a module is `require`-d, it directly retrieves the corresponding file from the cache, fetches the source code text and its byte code from the cache, and loads them directly.
 
-这么依赖，我们省去的就是：
+By relying on this mechanism, we save:
 
-+ 寻径时间（反复 statx，在 Node.js 中的封装逻辑更为复杂）；
-+ 读取文件时间（反复 openat，经 Node.js 封装逻辑更为复杂）；
-+ 源代码文本编译执行缩减为 byte code 编译执行。
-
-
-## 如何使用？
-目前 PGO 与 [Serverless Devs](https://www.serverless-devs.com/zh-cn) 实现了集成，可以通过 Serverless Devs 的 `s cli` 直接使用。
-
-1. 在 `s.yaml` 中的 service actions 中添加 `pre-deploy` ，配置 run 命令为 `s cli pgo`，如图所示
++ Path resolution time (repeated `statx`, more complex encapsulation logic in Node.js);
++ File reading time (repeated `openat`, more complex encapsulation logic in Node.js);
++ Compilation and execution of source code text reduced to byte code compilation and execution.
 
 
-![](https://gw.alicdn.com/imgextra/i2/O1CN01I1r4Px1zLjaHcU0ZD_!!6000000006698-2-tps-1646-642.png)
+## How to Use?
 
-2. 将 `s.yaml` 中的 runtime 改为 `nodejs14`
+PGO is currently integrated with [Serverless Devs](https://www.serverless-devs.com/en/). It can be directly used through Serverless Devs' `s cli`.
 
-3. 部署函数
+1. Add `pre-deploy` in the `service actions` of `s.yaml`, and configure the `run` command to `s cli pgo`, as shown in the image below.
+
+![Configuration Example](https://gw.alicdn.com/imgextra/i2/O1CN01I1r4Px1zLjaHcU0ZD_!!6000000006698-2-tps-1646-642.png)
+
+2. Change the `runtime` in `s.yaml` to `nodejs14`.
+
+3. Deploy the function.
 ```shell
 s deploy
 ```
 
-4. 调用函数
+4. Invoke function
 ```shell
 s cli fc-api invokeFunction --serviceName fctest --functionName functest1 --event '{}'
 ```
 
-## 参数
+## Parameters
 
-可以通过 `s cli pgo gen --参数key 参数value` 来传递参数
+Parameters can be passed using `s cli pgo gen --parameter key parameter value`.
 
-+ `remove-nm`：构建完成 pgo 后自动删除 node_modules， `s cli pgo gen --remove-nm`
++ `remove-nm`: Automatically removes `node_modules` after PGO build, `s cli pgo gen --remove-nm`.
 
-## 生成详细过程
-#### 1. 基于当前项目代码，生成PGO文件
+## Detailed Generation Process
+#### 1. Generate PGO File Based on Current Project Code
 ![](https://gw.alicdn.com/imgextra/i2/O1CN01XHeTqp1cXsvsuRAyq_!!6000000003611-2-tps-1164-930.png)
-#### 2. 将生成的 PGO 文件存入项目目录
+#### 2. Store the Generated PGO File in the Project Directory
 ![](https://gw.alicdn.com/imgextra/i2/O1CN01xp4Du11Xq8dg742js_!!6000000002974-2-tps-1050-629.png)
-#### 3. 线上使用 PGO 文件加速启动
+#### 3. Use PGO File Online to Accelerate Startup
 ![](https://gw.alicdn.com/imgextra/i4/O1CN01OGG21g1VhJmLQlEAS_!!6000000002684-2-tps-886-506.png)
 
 
 ---
 
-Alibaba Node.js 架构
+Alibaba Node.js Architecture
